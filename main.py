@@ -27,40 +27,40 @@ def predict(data: dict):
     df = pd.DataFrame([data])
 
     # Fill NA
+    num_cols = ["expected_revenue","probability","lead_age_days","priority"]
     df[num_cols] = df[num_cols].fillna(0)
 
-    for c in TE_cols:
+    for c in cat_cols:
         df[c] = df[c].fillna("Unknown").astype(str)
 
-    # Feature engineering (giống training)
+    # ========== FIX: Feature engineering giống 100% training ==========
     df["rev_log"] = np.log1p(df["expected_revenue"])
     df["rev_per_day"] = df["expected_revenue"] / (df["lead_age_days"] + 1)
 
-    # Nếu không có create_date từ client → force default
-    if "create_date" in df:
-        df["create_date"] = pd.to_datetime(df["create_date"], errors="coerce")
-        df["create_month"] = df["create_date"].dt.month.fillna(0)
-        df["create_dow"] = df["create_date"].dt.dayofweek.fillna(0)
-    else:
-        df["create_month"] = 0
-        df["create_dow"] = 0
+    # NEW: thêm 3 features bị thiếu
+    df["log_expected_revenue"] = np.log1p(df["expected_revenue"])
+    df["rev_per_day_age"] = df["expected_revenue"] / (df["lead_age_days"] + 1)
+    df["create_dayofweek"] = df["create_dow"]
 
     # Target encoding
-    df[TE_cols] = encoder.transform(df[TE_cols])
+    df[cat_cols] = encoder.transform(df[cat_cols])
 
-    # Đảm bảo đúng thứ tự cột features dùng khi train
-    feature_cols = (
-        num_cols
-        + TE_cols
-        + ["rev_log", "rev_per_day", "create_month", "create_dow"]
-    )
+    # ========= Giữ đúng thứ tự cột theo model ===============
+    needed_columns = [
+        "lead_age_days","expected_revenue","probability","stage_id",
+        "stage_sequence","source_id","campaign_id","salesperson_id",
+        "team_id","customer_region","priority","create_month",
+        "create_dayofweek","log_expected_revenue","rev_per_day_age",
+        "rev_log","rev_per_day","create_dow"
+    ]
+    df = df[needed_columns]
 
-    X = df[feature_cols]
-
-    prob = model.predict_proba(X)[0][1]
+    # Predict
+    prob = model.predict_proba(df)[0][1]
     label = int(prob >= 0.5)
 
     return {
         "predicted_prob": float(prob),
         "predicted_label": label
     }
+
