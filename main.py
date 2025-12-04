@@ -5,17 +5,15 @@ import numpy as np
 
 app = FastAPI()
 
+# Load model + encoder
 model = joblib.load("lead_win_model_xgb.pkl")
 encoder = joblib.load("encoder.pkl")
 
-# Cột categorical dùng trong training
-TE_cols = [
+# Cột categorical ban đầu dùng để encode
+cat_cols = [
     "customer_region","source_id","campaign_id",
     "salesperson_id","team_id","stage_id","stage_sequence"
 ]
-
-# Các cột numeric trong training
-num_cols = ["expected_revenue","probability","lead_age_days","priority"]
 
 @app.get("/")
 def root():
@@ -33,27 +31,34 @@ def predict(data: dict):
     for c in cat_cols:
         df[c] = df[c].fillna("Unknown").astype(str)
 
-    # ========== FIX: Feature engineering giống 100% training ==========
+    # Feature engineering GIỐNG HỆ TRAINING (18 features)
     df["rev_log"] = np.log1p(df["expected_revenue"])
     df["rev_per_day"] = df["expected_revenue"] / (df["lead_age_days"] + 1)
 
-    # NEW: thêm 3 features bị thiếu
-    df["log_expected_revenue"] = np.log1p(df["expected_revenue"])
-    df["rev_per_day_age"] = df["expected_revenue"] / (df["lead_age_days"] + 1)
-    df["create_dayofweek"] = df["create_dow"]
+    # Model yêu cầu thêm 3 cột nữa:
+    df["log_expected_revenue"] = df["rev_log"]
+    df["rev_per_day_age"] = df["rev_per_day"]
+    df["create_dayofweek"] = df.get("create_dow", 0)  # fallback
 
-    # Target encoding
+    # Nếu thiếu create_month or create_dow
+    if "create_month" not in df:
+        df["create_month"] = 1
+    if "create_dow" not in df:
+        df["create_dow"] = 0
+
+    # Apply target encoder
     df[cat_cols] = encoder.transform(df[cat_cols])
 
-    # ========= Giữ đúng thứ tự cột theo model ===============
-    needed_columns = [
-        "lead_age_days","expected_revenue","probability","stage_id",
-        "stage_sequence","source_id","campaign_id","salesperson_id",
-        "team_id","customer_region","priority","create_month",
-        "create_dayofweek","log_expected_revenue","rev_per_day_age",
-        "rev_log","rev_per_day","create_dow"
+    # Dùng đúng thứ tự cột mà model đòi hỏi
+    ordered_cols = [
+        'lead_age_days','expected_revenue','probability','stage_id',
+        'stage_sequence','source_id','campaign_id','salesperson_id',
+        'team_id','customer_region','priority','create_month',
+        'create_dayofweek','log_expected_revenue','rev_per_day_age',
+        'rev_log','rev_per_day','create_dow'
     ]
-    df = df[needed_columns]
+
+    df = df[ordered_cols]
 
     # Predict
     prob = model.predict_proba(df)[0][1]
@@ -63,4 +68,3 @@ def predict(data: dict):
         "predicted_prob": float(prob),
         "predicted_label": label
     }
-
