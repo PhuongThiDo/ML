@@ -5,29 +5,44 @@ import numpy as np
 
 app = FastAPI()
 
-# Load trained model
 model = joblib.load("lead_win_model_xgb.pkl")
+encoder = joblib.load("encoder.pkl")
 
-@app.get("/")
-def root():
-    return {"status": "API OK - model loaded"}
+cat_cols = [
+    "customer_region","source_id","campaign_id",
+    "salesperson_id","team_id","stage_id","stage_sequence"
+]
+
+num_cols = ["expected_revenue","probability","lead_age_days","priority"]
 
 @app.post("/predict")
 def predict(data: dict):
+
     df = pd.DataFrame([data])
 
-    # Feature engineering (GIỐNG NHƯ LÚC TRAIN)
-    df["log_expected_revenue"] = df["expected_revenue"].apply(
-        lambda x: 0 if x <= 0 else np.log(x)
-    )
+    # ========== PREPROCESS giống lúc training ==========
 
-    df["rev_per_day_age"] = df.apply(
-        lambda r: (r["expected_revenue"] / r["lead_age_days"])
-        if r["lead_age_days"] > 0 else 0,
-        axis=1
-    )
+    # numeric fill
+    df[num_cols] = df[num_cols].fillna(0)
 
-    # Predict
+    # categorical fill + convert to string
+    for c in cat_cols:
+        df[c] = df[c].fillna("Unknown").astype(str)
+
+    # engineered features
+    df["rev_log"] = np.log1p(df["expected_revenue"])
+    df["rev_per_day"] = df["expected_revenue"] / (df["lead_age_days"] + 1)
+
+    # create_date REQUIRED
+    df["create_date"] = pd.to_datetime(df["create_date"], errors="coerce")
+    df["create_month"] = df["create_date"].dt.month
+    df["create_dow"] = df["create_date"].dt.dayofweek
+
+    # Target Encoding (giống training)
+    df[cat_cols] = encoder.transform(df[cat_cols])
+
+    # =====================================================
+
     prob = model.predict_proba(df)[0][1]
     label = int(prob >= 0.5)
 
